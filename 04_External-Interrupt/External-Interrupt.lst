@@ -1,0 +1,254 @@
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 1
+
+
+
+
+
+       MCS-51 Family Macro Assembler   A S E M - 5 1   V 1.3
+       =====================================================
+
+
+
+	Source File:	External-Interrupt.a51
+	Object File:	External-Interrupt.hex
+	List File:	External-Interrupt.lst
+
+
+
+ Line  I  Addr  Code            Source
+
+    1:				; ==============================================================================
+    2:				; 專案名稱: AT89S52 外部中斷 (INT0) 穩定雙態暫停/重啟 (防卡死版)
+    3:				; 核心改進:
+    4:				;   1. 中斷內不放延遲、不原地等待放手，確保即刻 RETI 解除硬體中斷鎖定。
+    5:				;   2. 手動清除 IE0 旗標，杜絕彈跳造成的二次誤觸。
+    6:				;   3. 主迴圈負責處理暫停原地打轉與重啟時的放開去彈跳。
+    7:				; ==============================================================================
+    8:
+    9:		N      0000	    ORG     0000H
+   10:	  0000	02 00 30	    LJMP    MAIN
+   11:
+   12:		N      0003	    ORG     0003H             ; INT0 固定中斷向量位址
+   13:	  0003	02 00 55	    LJMP    EXT0_ISR
+   14:
+   15:				; ------------------------------------------------------------------------------
+   16:				; 變數定義
+   17:				; ------------------------------------------------------------------------------
+   18:		N	 20	FLAG_REG    DATA    20H
+   19:		B	 00	PAUSE_FLAG  BIT     FLAG_REG.0        ; 0 = 正常流動, 1 = 暫停
+   20:
+   21:				; ------------------------------------------------------------------------------
+   22:				; 主程式初始化
+   23:				; ------------------------------------------------------------------------------
+   24:		N      0030	    ORG     0030H
+   25:	  0030			MAIN:
+   26:	  0030	75 81 60	    MOV     SP, #60H
+   27:	  0033	C2 00		    CLR     PAUSE_FLAG        ; 預設非暫停
+   28:
+   29:				    ; 確保 P3.2 處於輸入準備狀態 (寫 1 打開弱上拉)
+   30:	  0035	D2 B2		    SETB    P3.2
+   31:
+   32:				    ; INT0 中斷暫存器設定
+   33:	  0037	D2 88		    SETB    IT0               ; IT0 = 1: 負邊緣觸發
+   34:	  0039	C2 89		    CLR     IE0               ; 先清空可能存在的歷史中斷旗標
+   35:	  003B	D2 A8		    SETB    EX0               ; 致能 INT0
+   36:	  003D	D2 AF		    SETB    EA                ; 致能全域中斷
+   37:
+   38:	  003F	74 FE		    MOV     A, #0FEH          ; 初始流水燈 (P2.0 亮)
+   39:
+   40:				; ------------------------------------------------------------------------------
+   41:				; 主迴圈
+   42:				; ------------------------------------------------------------------------------
+   43:	  0041			MAIN_LOOP:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 2
+
+
+
+ Line  I  Addr  Code            Source
+
+   44:				    ; 1. 輸出目前 LED 狀態到 P2
+   45:	  0041	F5 A0		    MOV     P2, A
+   46:
+   47:				    ; 2. 延遲約 200ms
+   48:	  0043	11 5A		    ACALL   DELAY_200MS
+   49:
+   50:				    ; 3. 移位
+   51:	  0045	23		    RL      A
+   52:
+   53:				    ; 4. 暫停檢查區
+   54:	  0046			CHECK_PAUSE:
+   55:	  0046	30 00 F8	    JNB     PAUSE_FLAG, MAIN_LOOP ; 若沒暫停，繼續流水燈
+   56:
+   57:				    ; ---- 若進入暫停 (PAUSE_FLAG = 1)，主迴圈在此等待 ----
+   58:	  0049			WAIT_UNPAUSE:
+   59:				    ; 在此空轉，等待下一次按鍵觸發中斷將 PAUSE_FLAG 翻轉為 0
+   60:	  0049	20 00 FD	    JB      PAUSE_FLAG, WAIT_UNPAUSE
+   61:
+   62:				    ; 剛解凍重啟時，防彈跳與等待按鍵放開 (在主迴圈做，絕不卡中斷!)
+   63:	  004C	11 67		    ACALL   DELAY_20MS
+   64:	  004E			WAIT_KEY_RELEASE:
+   65:	  004E	30 B2 FD	    JNB     P3.2, WAIT_KEY_RELEASE
+   66:	  0051	11 67		    ACALL   DELAY_20MS
+   67:
+   68:	  0053	80 EC		    SJMP    MAIN_LOOP
+   69:
+   70:				; ------------------------------------------------------------------------------
+   71:				; 極簡外部中斷常式 (ISR) - 幾微秒內完成並退出
+   72:				; ------------------------------------------------------------------------------
+   73:	  0055			EXT0_ISR:
+   74:				    ; 1. 翻轉暫停狀態
+   75:	  0055	B2 00		    CPL     PAUSE_FLAG
+   76:
+   77:				    ; 2. 手動清除硬體外部中斷旗標 (消弭機械彈跳餘波)
+   78:	  0057	C2 89		    CLR     IE0
+   79:
+   80:				    ; 3. 立即返回，解除 8051 內部中斷優先權閉鎖
+   81:	  0059	32		    RETI
+   82:
+   83:				; ------------------------------------------------------------------------------
+   84:				; 延遲子程式 (12MHz 晶振)
+   85:				; ------------------------------------------------------------------------------
+   86:	  005A			DELAY_200MS:
+   87:	  005A	7E 02		    MOV     R6, #2
+   88:	  005C			D200_1:
+   89:	  005C	7F C8		    MOV     R7, #200
+   90:	  005E			D200_2:
+   91:	  005E	7D FA		    MOV     R5, #250
+   92:	  0060	DD FE		    DJNZ    R5, $
+   93:	  0062	DF FA		    DJNZ    R7, D200_2
+   94:	  0064	DE F6		    DJNZ    R6, D200_1
+   95:	  0066	22		    RET
+   96:
+   97:	  0067			DELAY_20MS:
+   98:	  0067	7E 28		    MOV     R6, #40
+   99:	  0069			D20_1:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 3
+
+
+
+ Line  I  Addr  Code            Source
+
+  100:	  0069	7F FA		    MOV     R7, #250
+  101:	  006B	DF FE		    DJNZ    R7, $
+  102:	  006D	DE FA		    DJNZ    R6, D20_1
+  103:	  006F	22		    RET
+  104:
+  105:				    END
+
+
+
+
+
+                     register banks used:  ---
+
+                     no errors
+
+
+
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 4
+
+
+
+
+
+	       L I S T   O F   S Y M B O L S
+	       =============================
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+??ASEM_51			  NUMBER    8051
+??VERSION			  NUMBER    0130
+AC				  BIT	      D6
+ACC				  DATA	      E0
+B				  DATA	      F0
+CHECK_PAUSE			  CODE	    0046	  54
+CY				  BIT	      D7
+D200_1				  CODE	    005C	  88
+D200_2				  CODE	    005E	  90
+D20_1				  CODE	    0069	  99
+DELAY_200MS			  CODE	    005A	  86
+DELAY_20MS			  CODE	    0067	  97
+DPH				  DATA	      83
+DPL				  DATA	      82
+EA				  BIT	      AF
+ES				  BIT	      AC
+ET0				  BIT	      A9
+ET1				  BIT	      AB
+EX0				  BIT	      A8
+EX1				  BIT	      AA
+EXT0_ISR			  CODE	    0055	  73
+EXTI0				  CODE	    0003
+EXTI1				  CODE	    0013
+F0				  BIT	      D5
+FLAG_REG			  DATA	      20	  18
+IE				  DATA	      A8
+IE0				  BIT	      89
+IE1				  BIT	      8B
+INT0				  BIT	      B2
+INT1				  BIT	      B3
+IP				  DATA	      B8
+IT0				  BIT	      88
+IT1				  BIT	      8A
+MAIN				  CODE	    0030	  25
+MAIN_LOOP			  CODE	    0041	  43
+OV				  BIT	      D2
+P				  BIT	      D0
+P0				  DATA	      80
+P1				  DATA	      90
+P2				  DATA	      A0
+P3				  DATA	      B0
+PAUSE_FLAG			  BIT	      00	  19
+PCON				  DATA	      87
+PS				  BIT	      BC
+PSW				  DATA	      D0
+PT0				  BIT	      B9
+PT1				  BIT	      BB
+PX0				  BIT	      B8
+PX1				  BIT	      BA
+RB8				  BIT	      9A
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 5
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+RD				  BIT	      B7
+REN				  BIT	      9C
+RESET				  CODE	    0000
+RI				  BIT	      98
+RS0				  BIT	      D3
+RS1				  BIT	      D4
+RXD				  BIT	      B0
+SBUF				  DATA	      99
+SCON				  DATA	      98
+SINT				  CODE	    0023
+SM0				  BIT	      9F
+SM1				  BIT	      9E
+SM2				  BIT	      9D
+SP				  DATA	      81
+T0				  BIT	      B4
+T1				  BIT	      B5
+TB8				  BIT	      9B
+TCON				  DATA	      88
+TF0				  BIT	      8D
+TF1				  BIT	      8F
+TH0				  DATA	      8C
+TH1				  DATA	      8D
+TI				  BIT	      99
+TIMER0				  CODE	    000B
+TIMER1				  CODE	    001B
+TL0				  DATA	      8A
+TL1				  DATA	      8B
+TMOD				  DATA	      89
+TR0				  BIT	      8C
+TR1				  BIT	      8E
+TXD				  BIT	      B1
+WAIT_KEY_RELEASE		  CODE	    004E	  64
+WAIT_UNPAUSE			  CODE	    0049	  58
+WR				  BIT	      B6

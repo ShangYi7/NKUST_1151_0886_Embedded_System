@@ -1,0 +1,397 @@
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 1
+
+
+
+
+
+       MCS-51 Family Macro Assembler   A S E M - 5 1   V 1.3
+       =====================================================
+
+
+
+	Source File:	Counter.a51
+	Object File:	Counter.hex
+	List File:	Counter.lst
+
+
+
+ Line  I  Addr  Code            Source
+
+    1:				; ==============================================================================
+    2:				; 專案名稱: AT89C52 9-Bit 二進位 LED 計數器 (連續加一 / 連續加二模式)
+    3:				; 晶片型號: AT89C52 / AT89S52 (12MHz 晶體振盪器)
+    4:				;
+    5:				; 硬體接線定義:
+    6:				;   - 控制按鈕 1 (連續加一 / 暫停): P1.0 (Pin 1) -> 按下接地 (低電位觸發)
+    7:				;   - 控制按鈕 2 (連續加二 / 暫停): P1.1 (Pin 2) -> 按下接地 (低電位觸發)
+    8:				;   - 9-Bit LED 輸出 (共陽極接法, 0 點亮, 1 熄滅):
+    9:				;       Bit 0 (LSB) -> P2.0 (Pin 21) -> LED Bar Pin 1
+   10:				;       Bit 1       -> P2.1 (Pin 22) -> LED Bar Pin 2
+   11:				;       Bit 2       -> P2.2 (Pin 23) -> LED Bar Pin 3
+   12:				;       Bit 3       -> P2.3 (Pin 24) -> LED Bar Pin 4
+   13:				;       Bit 4       -> P2.4 (Pin 25) -> LED Bar Pin 5
+   14:				;       Bit 5       -> P2.5 (Pin 26) -> LED Bar Pin 6
+   15:				;       Bit 6       -> P2.6 (Pin 27) -> LED Bar Pin 7
+   16:				;       Bit 7       -> P2.7 (Pin 28) -> LED Bar Pin 8
+   17:				;       Bit 8 (MSB) -> P1.2 (Pin 3)  -> LED Bar Pin 9 (第 9 顆 LED)
+   18:				;       (LED Bar 陽極 Pin 11~19 均連接至 +5V VCC)
+   19:				;
+   20:				; 動作邏輯:
+   21:				;   - 開機初值: 0 (9 顆 LED 全滅, 二進位 000000000B)
+   22:				;   - 按下按鈕 1 (P1.0): 啟動「連續加一」自動計數 (步長 = 1, 00 -> 01 -> 10 -> 11
+				... -> 111111111 -> 0 循環)
+   23:				;   - 按下按鈕 2 (P1.1): 啟動「連續加二」自動計數 (步長 = 2, 00 -> 10 -> 100 -> 11
+				0 ... 循環)
+   24:				;   - 運行中再次按下當前模式的按鍵: 即時暫停 (維持當前 LED 數值，方便核�
+				��)
+   25:				;   - 暫停時按下任一按鈕: 依該按鈕模式恢復連續跑動
+   26:				; ==============================================================================
+   27:
+   28:		N      0000	    ORG     0000H
+   29:	  0000	02 00 30	    LJMP    MAIN
+   30:
+   31:				; ------------------------------------------------------------------------------
+   32:				; 符號與腳位定義
+   33:				; ------------------------------------------------------------------------------
+   34:		B	 90	KEY_RUN1    BIT     P1.0      ; 按鈕 1: 連續加一 / 暫停切換
+   35:		B	 91	KEY_RUN2    BIT     P1.1      ; 按鈕 2: 連續加二 / 暫停切換
+   36:		B	 92	LED_BIT8    BIT     P1.2      ; 第 9 顆 LED (Bit 8, 最高位 MSB, 0=亮, 1=滅)
+   37:
+   38:				; ------------------------------------------------------------------------------
+   39:				; 變數定義 (內部 RAM 位址)
+   40:				; ------------------------------------------------------------------------------
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 2
+
+
+
+ Line  I  Addr  Code            Source
+
+   41:		N	 30	COUNT_L     DATA    30H       ; 計數器低 8 位 (Bit 0 ~ Bit 7, 範圍 00H ~ FFH)
+   42:		N	 31	STEP_VAL    DATA    31H       ; 本次累加步長 (01H = 加一, 02H = 加二)
+   43:		N	 20	FLAGS       DATA    20H       ; 狀態旗標組 (可位元定址區 20H~2FH)
+   44:		B	 00	RUN_FLAG    BIT     FLAGS.0   ; 自動運行旗標: 1 = 連續計數中, 0 = 暫停/待機
+   45:		B	 01	COUNT_B8    BIT     FLAGS.1   ; 計數器第 9 位 (Bit 8, 範圍 0 或 1)
+   46:
+   47:				; ------------------------------------------------------------------------------
+   48:				; 主程式初始化
+   49:				; ------------------------------------------------------------------------------
+   50:		N      0030	    ORG     0030H
+   51:	  0030			MAIN:
+   52:	  0030	75 81 60	    MOV     SP, #60H          ; 設定堆疊指標於內部 RAM 安全區域
+   53:	  0033	75 30 00	    MOV     COUNT_L, #00H     ; 計數器低 8 位初值設為 0
+   54:	  0036	C2 01		    CLR     COUNT_B8          ; 計數器第 9 位初值設為 0
+   55:	  0038	C2 00		    CLR     RUN_FLAG          ; 初始為待機狀態 (等待按下按鈕啟動)
+   56:	  003A	75 31 01	    MOV     STEP_VAL, #01H    ; 預設步長為 1
+   57:
+   58:				    ; 設定輸入腳位 (8051 準雙向口寫 1 開啟內部弱上拉)
+   59:	  003D	D2 90		    SETB    KEY_RUN1
+   60:	  003F	D2 91		    SETB    KEY_RUN2
+   61:
+   62:				    ; 初始更新顯示 (全滅: 000000000B)
+   63:	  0041	11 BE		    ACALL   UPDATE_LEDS
+   64:
+   65:				; ------------------------------------------------------------------------------
+   66:				; 主迴圈: 依據運行狀態分別處理待機模式與自動計數模式
+   67:				; ------------------------------------------------------------------------------
+   68:	  0043			MAIN_LOOP:
+   69:				    ; 檢查目前是否處於自動運行模式
+   70:	  0043	20 00 2A	    JB      RUN_FLAG, AUTO_RUN_PROCESS
+   71:
+   72:				; ------------------------------------------------------------------------------
+   73:				; 待機 / 暫停模式處理: 監聽兩顆按鈕按下
+   74:				; ------------------------------------------------------------------------------
+   75:	  0046			PAUSE_MODE:
+   76:				    ; 1. 檢測按鈕 1 是否按下 (觸發連續加一)
+   77:	  0046	30 90 05	    JNB     KEY_RUN1, TRIG_BTN1
+   78:				    ; 2. 檢測按鈕 2 是否按下 (觸發連續加二)
+   79:	  0049	30 91 13	    JNB     KEY_RUN2, TRIG_BTN2
+   80:	  004C	80 F5		    SJMP    MAIN_LOOP
+   81:
+   82:				; --- 按鈕 1 觸發: 啟動連續加一 ---
+   83:	  004E			TRIG_BTN1:
+   84:	  004E	11 C9		    ACALL   DELAY_20MS        ; 去彈跳延遲
+   85:	  0050	20 90 F0	    JB      KEY_RUN1, MAIN_LOOP ; 若為雜訊則忽略
+   86:	  0053			WAIT_BTN1_RELEASE:
+   87:	  0053	30 90 FD	    JNB     KEY_RUN1, WAIT_BTN1_RELEASE ; 等待按鍵放開
+   88:	  0056	11 C9		    ACALL   DELAY_20MS        ; 放開去彈跳延遲
+   89:	  0058	75 31 01	    MOV     STEP_VAL, #01H    ; 設定累加步長為 +1
+   90:	  005B	D2 00		    SETB    RUN_FLAG          ; 設為自動運行狀態
+   91:	  005D	80 E4		    SJMP    MAIN_LOOP
+   92:
+   93:				; --- 按鈕 2 觸發: 啟動連續加二 ---
+   94:	  005F			TRIG_BTN2:
+   95:	  005F	11 C9		    ACALL   DELAY_20MS        ; 去彈跳延遲
+   96:	  0061	20 91 DF	    JB      KEY_RUN2, MAIN_LOOP ; 若為雜訊則忽略
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 3
+
+
+
+ Line  I  Addr  Code            Source
+
+   97:	  0064			WAIT_BTN2_RELEASE:
+   98:	  0064	30 91 FD	    JNB     KEY_RUN2, WAIT_BTN2_RELEASE ; 等待按鍵放開
+   99:	  0067	11 C9		    ACALL   DELAY_20MS        ; 放開去彈跳延遲
+  100:	  0069	75 31 02	    MOV     STEP_VAL, #02H    ; 設定累加步長為 +2
+  101:	  006C	D2 00		    SETB    RUN_FLAG          ; 設為自動運行狀態
+  102:	  006E	80 D3		    SJMP    MAIN_LOOP
+  103:
+  104:				; ------------------------------------------------------------------------------
+  105:				; 自動計數模式處理
+  106:				; ------------------------------------------------------------------------------
+  107:	  0070			AUTO_RUN_PROCESS:
+  108:				    ; 1. 計數值累加 (依據 STEP_VAL 執行 +1 或 +2)
+  109:	  0070	11 B3		    ACALL   ADD_STEP
+  110:
+  111:				    ; 2. 刷新 9 顆 LED 顯示
+  112:	  0072	11 BE		    ACALL   UPDATE_LEDS
+  113:
+  114:				    ; 3. 步進延遲 (約 100ms)，並在延遲期間即時檢測按鍵 (暫停或模式切換)
+  115:	  0074	11 78		    ACALL   DELAY_WITH_KEY_CHECK
+  116:	  0076	80 CB		    SJMP    MAIN_LOOP
+  117:
+  118:				; ------------------------------------------------------------------------------
+  119:				; 子程式: 具備按鍵即時中斷偵測的步進延遲 (約 100ms)
+  120:				; 設計說明:
+  121:				;   將 100ms 拆解為 5 次 20ms 輪詢：
+  122:				;   - 若按下正在執行的模式按鍵，則即時「暫停」計數。
+  123:				;   - 若按下另一顆按鍵，則即時「無縫切換」步長（加一與加二互相切換）�
+				��
+  124:				; ------------------------------------------------------------------------------
+  125:	  0078			DELAY_WITH_KEY_CHECK:
+  126:	  0078	7C 05		    MOV     R4, #5            ; 5 * 20ms = 100ms 每步流暢速度
+  127:	  007A			D_CHK_LOOP:
+  128:	  007A	11 C9		    ACALL   DELAY_20MS
+  129:
+  130:				    ; --- 檢查按鈕 1 (連續加一 / 暫停) ---
+  131:	  007C	20 90 17	    JB      KEY_RUN1, CHK_BTN2_IN_RUN
+  132:	  007F	11 C9		    ACALL   DELAY_20MS
+  133:	  0081	20 90 12	    JB      KEY_RUN1, CHK_BTN2_IN_RUN
+  134:				    ; 判斷按鈕 1 行為
+  135:	  0084	E5 31		    MOV     A, STEP_VAL
+  136:	  0086	B4 01 04	    CJNE    A, #01H, SWITCH_TO_PLUS1 ; 若原本為加二，則切換為加一
+  137:	  0089	C2 00		    CLR     RUN_FLAG          ; 若原本就是加一，再次按下表示請求暫停
+  138:	  008B	80 03		    SJMP    WAIT_KEY1_RELEASE
+  139:	  008D			SWITCH_TO_PLUS1:
+  140:	  008D	75 31 01	    MOV     STEP_VAL, #01H    ; 切換為連續加一
+  141:	  0090			WAIT_KEY1_RELEASE:
+  142:	  0090	30 90 FD	    JNB     KEY_RUN1, WAIT_KEY1_RELEASE
+  143:	  0093	11 C9		    ACALL   DELAY_20MS
+  144:	  0095	22		    RET                       ; 立即返回更新
+  145:
+  146:				    ; --- 檢查按鈕 2 (連續加二 / 暫停) ---
+  147:	  0096			CHK_BTN2_IN_RUN:
+  148:	  0096	20 91 17	    JB      KEY_RUN2, D_CHK_NEXT
+  149:	  0099	11 C9		    ACALL   DELAY_20MS
+  150:	  009B	20 91 12	    JB      KEY_RUN2, D_CHK_NEXT
+  151:				    ; 判斷按鈕 2 行為
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 4
+
+
+
+ Line  I  Addr  Code            Source
+
+  152:	  009E	E5 31		    MOV     A, STEP_VAL
+  153:	  00A0	B4 02 04	    CJNE    A, #02H, SWITCH_TO_PLUS2 ; 若原本為加一，則切換為加二
+  154:	  00A3	C2 00		    CLR     RUN_FLAG          ; 若原本就是加二，再次按下表示請求暫停
+  155:	  00A5	80 03		    SJMP    WAIT_KEY2_RELEASE
+  156:	  00A7			SWITCH_TO_PLUS2:
+  157:	  00A7	75 31 02	    MOV     STEP_VAL, #02H    ; 切換為連續加二
+  158:	  00AA			WAIT_KEY2_RELEASE:
+  159:	  00AA	30 91 FD	    JNB     KEY_RUN2, WAIT_KEY2_RELEASE
+  160:	  00AD	11 C9		    ACALL   DELAY_20MS
+  161:	  00AF	22		    RET                       ; 立即返回更新
+  162:
+  163:	  00B0			D_CHK_NEXT:
+  164:	  00B0	DC C8		    DJNZ    R4, D_CHK_LOOP
+  165:	  00B2	22		    RET
+  166:
+  167:				; ------------------------------------------------------------------------------
+  168:				; 子程式: 9-Bit 二進位計數器步進累加
+  169:				; 運算邏輯:
+  170:				;   (COUNT_B8 : COUNT_L) = (COUNT_B8 : COUNT_L) + STEP_VAL
+  171:				;   - 先將 COUNT_L 加上 STEP_VAL (1 或 2)。
+  172:				;   - 若低 8 位產生進位 (CY = 1)，則翻轉第 9 位元 (COUNT_B8)。
+  173:				;   - 當 COUNT_B8 由 1 翻轉回 0 時，即達成 512 溢位歸零循環。
+  174:				; ------------------------------------------------------------------------------
+  175:	  00B3			ADD_STEP:
+  176:	  00B3	E5 30		    MOV     A, COUNT_L
+  177:	  00B5	25 31		    ADD     A, STEP_VAL       ; 低 8 位加上步長
+  178:	  00B7	F5 30		    MOV     COUNT_L, A
+  179:	  00B9	50 02		    JNC     ADD_STEP_DONE     ; 若無進位，結束
+  180:	  00BB	B2 01		    CPL     COUNT_B8          ; 若溢位產生進位，翻轉第 9 位元 (Bit 8)
+  181:	  00BD			ADD_STEP_DONE:
+  182:	  00BD	22		    RET
+  183:
+  184:				; ------------------------------------------------------------------------------
+  185:				; 子程式: 更新 9 顆 LED 顯示 (共陽極 Active-Low 接法)
+  186:				; 邏輯說明:
+  187:				;   - 硬體為共陽極：腳位輸出 0 點亮，輸出 1 熄滅。
+  188:				;   - 二進位表示：數值 1 代表點亮，數值 0 代表熄滅。
+  189:				;   - 因此將計數值取反碼 (CPL) 後輸出至對應埠。
+  190:				; ------------------------------------------------------------------------------
+  191:	  00BE			UPDATE_LEDS:
+  192:				    ; 1. 輸出低 8 位 (Bit 0 ~ Bit 7) 至 P2.0 ~ P2.7
+  193:	  00BE	E5 30		    MOV     A, COUNT_L
+  194:	  00C0	F4		    CPL     A                 ; 取反碼: 1 轉為 0 (亮), 0 轉為 1 (滅)
+  195:	  00C1	F5 A0		    MOV     P2, A
+  196:
+  197:				    ; 2. 輸出第 9 位 (Bit 8, MSB) 至 P1.2 (LED_BIT8)
+  198:	  00C3	A2 01		    MOV     C, COUNT_B8
+  199:	  00C5	B3		    CPL     C                 ; 取反: 1 轉為 0 (亮), 0 轉為 1 (滅)
+  200:	  00C6	92 92		    MOV     LED_BIT8, C
+  201:	  00C8	22		    RET
+  202:
+  203:				; ------------------------------------------------------------------------------
+  204:				; 軟體延遲子程式 (適用於 12MHz 晶振，1 個機器週期 = 1us)
+  205:				; ------------------------------------------------------------------------------
+  206:	  00C9			DELAY_20MS:
+  207:	  00C9	7E 28		    MOV     R6, #40
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 5
+
+
+
+ Line  I  Addr  Code            Source
+
+  208:	  00CB			D20_L1:
+  209:	  00CB	7F FA		    MOV     R7, #250
+  210:	  00CD	DF FE		    DJNZ    R7, $             ; 250 * 2us = 500us
+  211:	  00CF	DE FA		    DJNZ    R6, D20_L1        ; 40 * 500us = 20ms
+  212:	  00D1	22		    RET
+  213:
+  214:				    END
+
+
+
+
+
+                     register banks used:  ---
+
+                     no errors
+
+
+
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 6
+
+
+
+
+
+	       L I S T   O F   S Y M B O L S
+	       =============================
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+??ASEM_51			  NUMBER    8051
+??VERSION			  NUMBER    0130
+AC				  BIT	      D6
+ACC				  DATA	      E0
+ADD_STEP			  CODE	    00B3	 175
+ADD_STEP_DONE			  CODE	    00BD	 181
+AUTO_RUN_PROCESS		  CODE	    0070	 107
+B				  DATA	      F0
+CHK_BTN2_IN_RUN			  CODE	    0096	 147
+COUNT_B8			  BIT	      01	  45
+COUNT_L				  DATA	      30	  41
+CY				  BIT	      D7
+D20_L1				  CODE	    00CB	 208
+DELAY_20MS			  CODE	    00C9	 206
+DELAY_WITH_KEY_CHECK		  CODE	    0078	 125
+DPH				  DATA	      83
+DPL				  DATA	      82
+D_CHK_LOOP			  CODE	    007A	 127
+D_CHK_NEXT			  CODE	    00B0	 163
+EA				  BIT	      AF
+ES				  BIT	      AC
+ET0				  BIT	      A9
+ET1				  BIT	      AB
+EX0				  BIT	      A8
+EX1				  BIT	      AA
+EXTI0				  CODE	    0003
+EXTI1				  CODE	    0013
+F0				  BIT	      D5
+FLAGS				  DATA	      20	  43
+IE				  DATA	      A8
+IE0				  BIT	      89
+IE1				  BIT	      8B
+INT0				  BIT	      B2
+INT1				  BIT	      B3
+IP				  DATA	      B8
+IT0				  BIT	      88
+IT1				  BIT	      8A
+KEY_RUN1			  BIT	      90	  34
+KEY_RUN2			  BIT	      91	  35
+LED_BIT8			  BIT	      92	  36
+MAIN				  CODE	    0030	  51
+MAIN_LOOP			  CODE	    0043	  68
+OV				  BIT	      D2
+P				  BIT	      D0
+P0				  DATA	      80
+P1				  DATA	      90
+P2				  DATA	      A0
+P3				  DATA	      B0
+PAUSE_MODE			  CODE	    0046	  75
+PCON				  DATA	      87
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 7
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+PS				  BIT	      BC
+PSW				  DATA	      D0
+PT0				  BIT	      B9
+PT1				  BIT	      BB
+PX0				  BIT	      B8
+PX1				  BIT	      BA
+RB8				  BIT	      9A
+RD				  BIT	      B7
+REN				  BIT	      9C
+RESET				  CODE	    0000
+RI				  BIT	      98
+RS0				  BIT	      D3
+RS1				  BIT	      D4
+RUN_FLAG			  BIT	      00	  44
+RXD				  BIT	      B0
+SBUF				  DATA	      99
+SCON				  DATA	      98
+SINT				  CODE	    0023
+SM0				  BIT	      9F
+SM1				  BIT	      9E
+SM2				  BIT	      9D
+SP				  DATA	      81
+STEP_VAL			  DATA	      31	  42
+SWITCH_TO_PLUS1			  CODE	    008D	 139
+SWITCH_TO_PLUS2			  CODE	    00A7	 156
+T0				  BIT	      B4
+T1				  BIT	      B5
+TB8				  BIT	      9B
+TCON				  DATA	      88
+TF0				  BIT	      8D
+TF1				  BIT	      8F
+TH0				  DATA	      8C
+TH1				  DATA	      8D
+TI				  BIT	      99
+TIMER0				  CODE	    000B
+TIMER1				  CODE	    001B
+TL0				  DATA	      8A
+TL1				  DATA	      8B
+TMOD				  DATA	      89
+TR0				  BIT	      8C
+TR1				  BIT	      8E
+TRIG_BTN1			  CODE	    004E	  83
+TRIG_BTN2			  CODE	    005F	  94
+TXD				  BIT	      B1
+UPDATE_LEDS			  CODE	    00BE	 191
+WAIT_BTN1_RELEASE		  CODE	    0053	  86
+WAIT_BTN2_RELEASE		  CODE	    0064	  97
+WAIT_KEY1_RELEASE		  CODE	    0090	 141
+WAIT_KEY2_RELEASE		  CODE	    00AA	 158
+WR				  BIT	      B6
