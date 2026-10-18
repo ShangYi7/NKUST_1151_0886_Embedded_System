@@ -1,0 +1,52 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes'?>
+<WORKSPACE>
+ <FRAME activeWindow="0">
+  <PLACEMENT>01d9d0cb00030000fffffffffffffff80000077e0000042f00000042000000c1000007c1000004e10000000002000000078000000000000000170000077d0000042e</PLACEMENT>
+  <WINDOW index="0" module="ISIS" type="default" mode="00050a10"/>
+ </FRAME>
+ <MODULE name="ISIS">
+  <editor snaprange="127000" xcursor="0" gridmode="2" snap="254000" flipped="0" metric="0" scale="130" zoom="-1" orgmode="0" snapidx="2" gridmajor="2540000" gridminor="254000">
+   <centre x="-7626479" y="-2286000"/>
+   <origin x="0" y="0"/>
+   <world x2="12700000" x1="-12700000" y2="8890000" y1="-8890000"/>
+  </editor>
+ </MODULE>
+ <MODULE name="ARES">
+  <editor snaprange="0" xcursor="0" gridmode="2" snap="0" flipped="0" metric="1" scale="10" zoom="10" orgmode="0" snapidx="3" gridmajor="0" gridminor="0">
+   <centre x="0" y="0"/>
+   <origin x="0" y="0"/>
+   <world x2="15240000" x1="-15240000" y2="12700000" y1="-12700000"/>
+  </editor>
+ </MODULE>
+ <MODULE name="VSMDEBUG">
+  <PWI>
+   <POPUP flags="00000082" x="10" iid="-1" y="21" h="200" pid="0" w="800">
+    <PROPERTIES/>
+   </POPUP>
+   <POPUP flags="000000b2" x="30" iid="-1" y="41" h="200" pid="1" w="350">
+    <PROPERTIES/>
+   </POPUP>
+   <POPUP flags="000000a2" x="50" iid="-1" y="61" h="200" pid="2" w="800">
+    <PROPERTIES/>
+   </POPUP>
+   <POPUP flags="00000008" x="70" iid="1" y="81" h="17" pid="1" w="24">
+    <PROPERTIES/>
+   </POPUP>
+   <POPUP flags="0000000a" x="90" iid="1" y="101" h="16" pid="3" w="8">
+    <PROPERTIES/>
+   </POPUP>
+   <POPUP flags="0000000a" x="110" iid="1" y="121" h="16" pid="2" w="8">
+    <PROPERTIES/>
+   </POPUP>
+   <POPUP flags="00000008" x="130" iid="7" y="141" h="17" pid="1" w="24">
+    <PROPERTIES/>
+   </POPUP>
+   <POPUP flags="0000000a" x="150" iid="7" y="161" h="16" pid="3" w="8">
+    <PROPERTIES/>
+   </POPUP>
+   <POPUP flags="0000000a" x="170" iid="7" y="181" h="16" pid="2" w="8">
+    <PROPERTIES/>
+   </POPUP>
+  </PWI>
+ </MODULE>
+</WORKSPACE>
