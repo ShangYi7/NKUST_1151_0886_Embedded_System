@@ -1,0 +1,200 @@
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 1
+
+
+
+
+
+       MCS-51 Family Macro Assembler   A S E M - 5 1   V 1.3
+       =====================================================
+
+
+
+	Source File:	UART_TX.a51
+	Object File:	UART_TX.hex
+	List File:	UART_TX.lst
+
+
+
+ Line  I  Addr  Code            Source
+
+    1:				; ==============================================================================
+    2:				; 專案名稱: AT89C52 雙機 UART 串列通訊 - 純發送端 (U3 Transmitter)
+    3:				; 腳位定義:
+    4:				;   - 按鈕: P1.0 (按下為低電位 0)
+    5:				;   - 發送: P3.1 (TXD) 接至接收端 P3.0 (RXD)
+    6:				; ==============================================================================
+    7:
+    8:		N      0000	    ORG     0000H
+    9:	  0000	02 00 30	    LJMP    MAIN
+   10:
+   11:		N	 30	COUNTER_VAL DATA    30H
+   12:		B	 90	KEY_PIN     BIT     P1.0
+   13:
+   14:		N      0030	    ORG     0030H
+   15:	  0030			MAIN:
+   16:	  0030	75 81 60	    MOV     SP, #60H
+   17:	  0033	75 30 00	    MOV     COUNTER_VAL, #00H
+   18:	  0036	D2 90		    SETB    KEY_PIN
+   19:
+   20:				    ; Timer 1 Mode 2 (8-bit 自動重載)
+   21:	  0038	75 89 20	    MOV     TMOD, #20H
+   22:	  003B	75 98 40	    MOV     SCON, #40H          ; Mode 1, REN=0 (純發送，不接收)
+   23:	  003E	75 8D FD	    MOV     TH1, #0FDH          ; 9600 bps @ 11.0592MHz (或 12MHz 同步)
+   24:	  0041	75 8B FD	    MOV     TL1, #0FDH
+   25:	  0044	D2 8E		    SETB    TR1
+   26:	  0046	C2 99		    CLR     TI
+   27:
+   28:	  0048			MAIN_LOOP:
+   29:	  0048	20 90 FD	    JB      KEY_PIN, MAIN_LOOP  ; 未按下則等待
+   30:
+   31:	  004B	11 67		    ACALL   DELAY_20MS          ; 按下防彈跳
+   32:	  004D	20 90 F8	    JB      KEY_PIN, MAIN_LOOP
+   33:
+   34:	  0050	05 30		    INC     COUNTER_VAL         ; 計數 +1
+   35:	  0052	E5 30		    MOV     A, COUNTER_VAL
+   36:	  0054	11 5D		    ACALL   UART_SEND_BYTE      ; 送出資料
+   37:
+   38:	  0056			WAIT_RELEASE:
+   39:	  0056	30 90 FD	    JNB     KEY_PIN, WAIT_RELEASE ; 等待完全放開按鈕
+   40:	  0059	11 67		    ACALL   DELAY_20MS          ; 放開防彈跳
+   41:
+   42:	  005B	80 EB		    SJMP    MAIN_LOOP
+   43:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 2
+
+
+
+ Line  I  Addr  Code            Source
+
+   44:	  005D			UART_SEND_BYTE:
+   45:	  005D	C2 99		    CLR     TI
+   46:	  005F	F5 99		    MOV     SBUF, A
+   47:	  0061			WAIT_TX:
+   48:	  0061	30 99 FD	    JNB     TI, WAIT_TX
+   49:	  0064	C2 99		    CLR     TI
+   50:	  0066	22		    RET
+   51:
+   52:	  0067			DELAY_20MS:
+   53:	  0067	7E 28		    MOV     R6, #40
+   54:	  0069			D1:
+   55:	  0069	7F FA		    MOV     R7, #250
+   56:	  006B			D2:
+   57:	  006B	DF FE		    DJNZ    R7, D2
+   58:	  006D	DE FA		    DJNZ    R6, D1
+   59:	  006F	22		    RET
+   60:
+   61:				    END
+
+
+
+
+
+                     register banks used:  ---
+
+                     no errors
+
+
+
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 3
+
+
+
+
+
+	       L I S T   O F   S Y M B O L S
+	       =============================
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+??ASEM_51			  NUMBER    8051
+??VERSION			  NUMBER    0130
+AC				  BIT	      D6
+ACC				  DATA	      E0
+B				  DATA	      F0
+COUNTER_VAL			  DATA	      30	  11
+CY				  BIT	      D7
+D1				  CODE	    0069	  54
+D2				  CODE	    006B	  56
+DELAY_20MS			  CODE	    0067	  52
+DPH				  DATA	      83
+DPL				  DATA	      82
+EA				  BIT	      AF
+ES				  BIT	      AC
+ET0				  BIT	      A9
+ET1				  BIT	      AB
+EX0				  BIT	      A8
+EX1				  BIT	      AA
+EXTI0				  CODE	    0003
+EXTI1				  CODE	    0013
+F0				  BIT	      D5
+IE				  DATA	      A8
+IE0				  BIT	      89
+IE1				  BIT	      8B
+INT0				  BIT	      B2
+INT1				  BIT	      B3
+IP				  DATA	      B8
+IT0				  BIT	      88
+IT1				  BIT	      8A
+KEY_PIN				  BIT	      90	  12
+MAIN				  CODE	    0030	  15
+MAIN_LOOP			  CODE	    0048	  28
+OV				  BIT	      D2
+P				  BIT	      D0
+P0				  DATA	      80
+P1				  DATA	      90
+P2				  DATA	      A0
+P3				  DATA	      B0
+PCON				  DATA	      87
+PS				  BIT	      BC
+PSW				  DATA	      D0
+PT0				  BIT	      B9
+PT1				  BIT	      BB
+PX0				  BIT	      B8
+PX1				  BIT	      BA
+RB8				  BIT	      9A
+RD				  BIT	      B7
+REN				  BIT	      9C
+RESET				  CODE	    0000
+RI				  BIT	      98
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 4
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+RS0				  BIT	      D3
+RS1				  BIT	      D4
+RXD				  BIT	      B0
+SBUF				  DATA	      99
+SCON				  DATA	      98
+SINT				  CODE	    0023
+SM0				  BIT	      9F
+SM1				  BIT	      9E
+SM2				  BIT	      9D
+SP				  DATA	      81
+T0				  BIT	      B4
+T1				  BIT	      B5
+TB8				  BIT	      9B
+TCON				  DATA	      88
+TF0				  BIT	      8D
+TF1				  BIT	      8F
+TH0				  DATA	      8C
+TH1				  DATA	      8D
+TI				  BIT	      99
+TIMER0				  CODE	    000B
+TIMER1				  CODE	    001B
+TL0				  DATA	      8A
+TL1				  DATA	      8B
+TMOD				  DATA	      89
+TR0				  BIT	      8C
+TR1				  BIT	      8E
+TXD				  BIT	      B1
+UART_SEND_BYTE			  CODE	    005D	  44
+WAIT_RELEASE			  CODE	    0056	  38
+WAIT_TX				  CODE	    0061	  47
+WR				  BIT	      B6
