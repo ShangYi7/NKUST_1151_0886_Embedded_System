@@ -1,0 +1,751 @@
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 1
+
+
+
+
+
+       MCS-51 Family Macro Assembler   A S E M - 5 1   V 1.3
+       =====================================================
+
+
+
+	Source File:	UART-with-PC.a51
+	Object File:	UART-with-PC.hex
+	List File:	UART-with-PC.lst
+
+
+
+ Line  I  Addr  Code            Source
+
+    1:				; ==============================================================================
+    2:				; 專案名稱: AT89C52 16 進制計數器與 PC 串列通訊 (UART with PC)
+    3:				; 實驗平台: Proteus 模擬 / 實體 8051 開發板
+    4:				; 晶片型號: AT89C52 (預設 11.0592MHz 或 12MHz 晶振)
+    5:				;
+    6:				; 硬體腳位配置:
+    7:				;   - 共陰極 7 段顯示器 (Common Cathode 7-Segment, 陰極接地):
+    8:				;       P2.0 -> a 段
+    9:				;       P2.1 -> b 段
+   10:				;       P2.2 -> c 段
+   11:				;       P2.3 -> d 段
+   12:				;       P2.4 -> e 段
+   13:				;       P2.5 -> f 段
+   14:				;       P2.6 -> g 段
+   15:				;       P2.7 -> 空接 (dp 小數點)
+   16:				;       (共陰極高電位 1 點亮，低電位 0 熄滅)
+   17:				;
+   18:				;   - UART 串列通訊介面 (連接至 PC Virtual Terminal):
+   19:				;       P3.0 (RXD) -> 連接至 Virtual Terminal 的 TXD (接收 PC 指令)
+   20:				;       P3.1 (TXD) -> 連接至 Virtual Terminal 的 RXD (發送資料至 PC)
+   21:				;
+   22:				; 系統功能與操作邏輯:
+   23:				;   1. 開機後自動啟動 16 進制 (0 ~ F) 自動循環計數，每步間隔約 0.6 秒。
+   24:				;   2. 七段顯示器即時顯示 0, 1, 2, ..., 9, A, b, C, d, E, F 循環。
+   25:				;   3. 每次計數更新時，自動透過 UART 發送當前值至 Virtual Terminal 顯示。
+   26:				;   4. PC 雙向終端機互動控制指令 (在 Virtual Terminal 視窗直接鍵入):
+   27:				;      - '0' ~ '9' / 'A' ~ 'F' (或小寫 'a' ~ 'f'): 直接設定計數值。
+   28:				;      - [空白鍵 Space] 或 'P' / 'p': 暫停 / 恢復自動計數。
+   29:				;      - '+': 單步手動計數加 1。
+   30:				;      - '-': 單步手動計數減 1。
+   31:				;      - 'R' / 'r': 重置計數值歸零 (Count = 0)。
+   32:				; ==============================================================================
+   33:
+   34:		N      0000	    ORG     0000H
+   35:	  0000	02 00 30	    LJMP    MAIN
+   36:
+   37:				; ------------------------------------------------------------------------------
+   38:				; 內部 RAM 變數與旗標定義
+   39:				; ------------------------------------------------------------------------------
+   40:		N	 30	COUNTER_VAL DATA    30H       ; 目前計數值 (00H ~ 0FH)
+   41:		N	 20	FLAGS       DATA    20H       ; 狀態旗標組 (可位元定址區 20H~2FH)
+   42:		B	 00	PAUSE_FLAG  BIT     FLAGS.0   ; 暫停旗標: 0 = 自動計數運行中, 1 = 暫停計數
+   43:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 2
+
+
+
+ Line  I  Addr  Code            Source
+
+   44:				; ------------------------------------------------------------------------------
+   45:				; 主程式起始區段
+   46:				; ------------------------------------------------------------------------------
+   47:		N      0030	    ORG     0030H
+   48:	  0030			MAIN:
+   49:	  0030	75 81 60	    MOV     SP, #60H          ; 設定堆疊指標
+   50:	  0033	75 30 00	    MOV     COUNTER_VAL, #00H ; 初始計數值設為 0
+   51:	  0036	C2 00		    CLR     PAUSE_FLAG        ; 預設為自動運行模式
+   52:
+   53:				    ; --- 初始化 UART 與 Timer 1 鮑率產生器 ---
+   54:				    ; TMOD: Timer 1 Mode 2 (8 位元自動重載)
+   55:	  0038	75 89 20	    MOV     TMOD, #20H
+   56:				    ; SCON: Mode 1 (8-bit UART), REN=1 (致能接收)
+   57:	  003B	75 98 50	    MOV     SCON, #50H
+   58:
+   59:				    ; 鮑率設定 (9600 bps @ 11.0592MHz):
+   60:	  003E	75 8D FD	    MOV     TH1, #0FDH
+   61:	  0041	75 8B FD	    MOV     TL1, #0FDH
+   62:	  0044	D2 8E		    SETB    TR1               ; 啟動 Timer 1
+   63:
+   64:				    ; 清空 UART 發送與接收旗標
+   65:	  0046	C2 99		    CLR     TI
+   66:	  0048	C2 98		    CLR     RI
+   67:
+   68:				    ; 初始更新 7 段顯示器
+   69:	  004A	31 18		    ACALL   UPDATE_7SEG
+   70:
+   71:				    ; 透過 UART 向 PC 終端機發送開機迎賓選單
+   72:	  004C	31 42		    ACALL   SEND_WELCOME_MSG
+   73:
+   74:				    ; 發送初始計數狀態
+   75:	  004E	31 23		    ACALL   SEND_COUNT_VAL
+   76:
+   77:				; ------------------------------------------------------------------------------
+   78:				; 主迴圈: 自動計數與即時輪詢處理
+   79:				; ------------------------------------------------------------------------------
+   80:	  0050			MAIN_LOOP:
+   81:				    ; 檢查目前是否處於暫停模式
+   82:	  0050	20 00 13	    JB      PAUSE_FLAG, PAUSE_PROCESS
+   83:
+   84:				    ; --- 自動運行模式 ---
+   85:				    ; 延遲步進時間 (約 600ms)，並在延遲期間即時輪詢 UART 接收
+   86:	  0053	11 6D		    ACALL   DELAY_WITH_UART_POLL
+   87:
+   88:				    ; 延遲結束後，若在延遲期間被設定為暫停，則跳過累加
+   89:	  0055	20 00 F8	    JB      PAUSE_FLAG, MAIN_LOOP
+   90:
+   91:				    ; 計數值遞增 1
+   92:	  0058	05 30		    INC     COUNTER_VAL
+   93:	  005A	E5 30		    MOV     A, COUNTER_VAL
+   94:	  005C	54 0F		    ANL     A, #0FH           ; 保持在 00H ~ 0FH 範圍 (16 進制 0~F 循環)
+   95:	  005E	F5 30		    MOV     COUNTER_VAL, A
+   96:
+   97:				    ; 更新 7 段顯示器並回報 PC 終端機
+   98:	  0060	31 18		    ACALL   UPDATE_7SEG
+   99:	  0062	31 23		    ACALL   SEND_COUNT_VAL
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 3
+
+
+
+ Line  I  Addr  Code            Source
+
+  100:
+  101:	  0064	80 EA		    SJMP    MAIN_LOOP
+  102:
+  103:				; ------------------------------------------------------------------------------
+  104:				; 暫停模式處理: 專注監聽 PC 端指令
+  105:				; ------------------------------------------------------------------------------
+  106:	  0066			PAUSE_PROCESS:
+  107:	  0066	30 98 FD	    JNB     RI, PAUSE_PROCESS ; 等待 PC 端傳送字元
+  108:	  0069	11 7C		    ACALL   PROCESS_UART_CHAR ; 處理接收到的指令
+  109:	  006B	80 E3		    SJMP    MAIN_LOOP
+  110:
+  111:				; ------------------------------------------------------------------------------
+  112:				; 子程式: 步進延遲 (約 600ms) 並即時輪詢 UART 接收
+  113:				; 設計說明:
+  114:				;   將 600ms 拆解為 30 個 20ms 區間，每 20ms 檢查一次 RI 旗標。
+  115:				;   若有鍵盤輸入則立即處理，大幅提升系統反應即時性。
+  116:				; ------------------------------------------------------------------------------
+  117:	  006D			DELAY_WITH_UART_POLL:
+  118:	  006D	7C 1E		    MOV     R4, #30           ; 30 * 20ms = 600ms
+  119:	  006F			D_LOOP:
+  120:	  006F	31 5C		    ACALL   DELAY_20MS
+  121:
+  122:				    ; 檢查是否有 PC 端傳來的字元
+  123:	  0071	30 98 05	    JNB     RI, D_NO_CHAR
+  124:	  0074	11 7C		    ACALL   PROCESS_UART_CHAR
+  125:				    ; 若收到指令後變為暫停狀態，立即結束延遲
+  126:	  0076	20 00 02	    JB      PAUSE_FLAG, D_EXIT
+  127:
+  128:	  0079			D_NO_CHAR:
+  129:	  0079	DC F4		    DJNZ    R4, D_LOOP
+  130:	  007B			D_EXIT:
+  131:	  007B	22		    RET
+  132:
+  133:				; ------------------------------------------------------------------------------
+  134:				; 子程式: 處理 UART 接收字元 (PC 鍵盤指令解析)
+  135:				; ------------------------------------------------------------------------------
+  136:	  007C			PROCESS_UART_CHAR:
+  137:	  007C	C2 98		    CLR     RI                ; 清除接收中斷旗標
+  138:	  007E	E5 99		    MOV     A, SBUF           ; 讀取收到的 ASCII 字元
+  139:
+  140:				    ; 忽略換行與回車符號
+  141:	  0080	B4 0D 01	    CJNE    A, #0DH, CHK_LF
+  142:	  0083	22		    RET
+  143:	  0084			CHK_LF:
+  144:	  0084	B4 0A 01	    CJNE    A, #0AH, CHK_DIGIT
+  145:	  0087	22		    RET
+  146:
+  147:				; --- 1. 檢查是否為 '0' ~ '9' ---
+  148:	  0088			CHK_DIGIT:
+  149:	  0088	B4 30 02	    CJNE    A, #'0', CHK_D_GT
+  150:	  008B	80 07		    SJMP    SET_DIGIT
+  151:	  008D			CHK_D_GT:
+  152:	  008D	40 54		    JC      CHK_PLUS          ; 小於 '0'，跳去檢查符號
+  153:	  008F	B4 3A 00	    CJNE    A, #('9' + 1), CHK_D_VALID
+  154:	  0092			CHK_D_VALID:
+  155:	  0092	50 07		    JNC     CHK_UPPER         ; 大於 '9'，跳去檢查大寫字母
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 4
+
+
+
+ Line  I  Addr  Code            Source
+
+  156:	  0094			SET_DIGIT:
+  157:	  0094	C3		    CLR     C
+  158:	  0095	94 30		    SUBB    A, #'0'           ; 轉換為數值 0 ~ 9
+  159:	  0097	F5 30		    MOV     COUNTER_VAL, A
+  160:	  0099	80 78		    SJMP    CMD_UPDATE_COUNT
+  161:
+  162:				; --- 2. 檢查是否為大寫 'A' ~ 'F' ---
+  163:	  009B			CHK_UPPER:
+  164:	  009B	B4 41 02	    CJNE    A, #'A', CHK_U_GT
+  165:	  009E	80 07		    SJMP    SET_UPPER
+  166:	  00A0			CHK_U_GT:
+  167:	  00A0	40 0E		    JC      CHK_LOWER         ; 小於 'A'，跳去檢查小寫字母
+  168:	  00A2	B4 47 00	    CJNE    A, #('F' + 1), CHK_U_VALID
+  169:	  00A5			CHK_U_VALID:
+  170:	  00A5	50 09		    JNC     CHK_LOWER         ; 大於 'F'，跳去檢查小寫字母
+  171:	  00A7			SET_UPPER:
+  172:	  00A7	C3		    CLR     C
+  173:	  00A8	94 41		    SUBB    A, #'A'
+  174:	  00AA	24 0A		    ADD     A, #10            ; 轉換為數值 10 ~ 15 (0AH ~ 0FH)
+  175:	  00AC	F5 30		    MOV     COUNTER_VAL, A
+  176:	  00AE	80 63		    SJMP    CMD_UPDATE_COUNT
+  177:
+  178:				; --- 3. 檢查是否為小寫 'a' ~ 'f' ---
+  179:	  00B0			CHK_LOWER:
+  180:	  00B0	B4 61 02	    CJNE    A, #'a', CHK_L_GT
+  181:	  00B3	80 07		    SJMP    SET_LOWER
+  182:	  00B5			CHK_L_GT:
+  183:	  00B5	40 0E		    JC      CHK_SPACE         ; 小於 'a'，跳去檢查空白鍵
+  184:	  00B7	B4 67 00	    CJNE    A, #('f' + 1), CHK_L_VALID
+  185:	  00BA			CHK_L_VALID:
+  186:	  00BA	50 09		    JNC     CHK_SPACE         ; 大於 'f'，跳去檢查其他指令
+  187:	  00BC			SET_LOWER:
+  188:	  00BC	C3		    CLR     C
+  189:	  00BD	94 61		    SUBB    A, #'a'
+  190:	  00BF	24 0A		    ADD     A, #10            ; 轉換為數值 10 ~ 15 (0AH ~ 0FH)
+  191:	  00C1	F5 30		    MOV     COUNTER_VAL, A
+  192:	  00C3	80 4E		    SJMP    CMD_UPDATE_COUNT
+  193:
+  194:				; --- 4. 檢查是否為空白鍵 ' ' 或 'P' / 'p' (暫停/恢復切換) ---
+  195:	  00C5			CHK_SPACE:
+  196:	  00C5	B4 20 02	    CJNE    A, #' ', CHK_KEY_P
+  197:	  00C8	80 08		    SJMP    TOGGLE_PAUSE
+  198:	  00CA			CHK_KEY_P:
+  199:	  00CA	B4 50 02	    CJNE    A, #'P', CHK_KEY_P_LOW
+  200:	  00CD	80 03		    SJMP    TOGGLE_PAUSE
+  201:	  00CF			CHK_KEY_P_LOW:
+  202:	  00CF	B4 70 11	    CJNE    A, #'p', CHK_PLUS
+  203:	  00D2			TOGGLE_PAUSE:
+  204:	  00D2	B2 00		    CPL     PAUSE_FLAG        ; 切換暫停 / 運行狀態
+  205:	  00D4	20 00 06	    JB      PAUSE_FLAG, SEND_PAUSE_NOTIFY
+  206:				    ; 發送恢復運行通知
+  207:	  00D7	90 02 FF	    MOV     DPTR, #STR_RESUME
+  208:	  00DA	31 48		    ACALL   SEND_STRING
+  209:	  00DC	22		    RET
+  210:	  00DD			SEND_PAUSE_NOTIFY:
+  211:	  00DD	90 02 E4	    MOV     DPTR, #STR_PAUSE
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 5
+
+
+
+ Line  I  Addr  Code            Source
+
+  212:	  00E0	31 48		    ACALL   SEND_STRING
+  213:	  00E2	22		    RET
+  214:
+  215:				; --- 5. 檢查是否為 '+' (單步加一) ---
+  216:	  00E3			CHK_PLUS:
+  217:	  00E3	B4 2B 0A	    CJNE    A, #'+', CHK_MINUS
+  218:	  00E6	05 30		    INC     COUNTER_VAL
+  219:	  00E8	E5 30		    MOV     A, COUNTER_VAL
+  220:	  00EA	54 0F		    ANL     A, #0FH
+  221:	  00EC	F5 30		    MOV     COUNTER_VAL, A
+  222:	  00EE	80 23		    SJMP    CMD_UPDATE_COUNT
+  223:
+  224:				; --- 6. 檢查是否為 '-' (單步減一) ---
+  225:	  00F0			CHK_MINUS:
+  226:	  00F0	B4 2D 0A	    CJNE    A, #'-', CHK_RESET
+  227:	  00F3	15 30		    DEC     COUNTER_VAL
+  228:	  00F5	E5 30		    MOV     A, COUNTER_VAL
+  229:	  00F7	54 0F		    ANL     A, #0FH
+  230:	  00F9	F5 30		    MOV     COUNTER_VAL, A
+  231:	  00FB	80 16		    SJMP    CMD_UPDATE_COUNT
+  232:
+  233:				; --- 7. 檢查是否為 'R' / 'r' (重置歸零) ---
+  234:	  00FD			CHK_RESET:
+  235:	  00FD	B4 52 02	    CJNE    A, #'R', CHK_RESET_LOW
+  236:	  0100	80 03		    SJMP    DO_RESET
+  237:	  0102			CHK_RESET_LOW:
+  238:	  0102	B4 72 0D	    CJNE    A, #'r', CMD_UNKNOWN
+  239:	  0105			DO_RESET:
+  240:	  0105	75 30 00	    MOV     COUNTER_VAL, #00H
+  241:	  0108	90 03 1C	    MOV     DPTR, #STR_RESET
+  242:	  010B	31 48		    ACALL   SEND_STRING
+  243:	  010D	31 18		    ACALL   UPDATE_7SEG
+  244:	  010F	31 23		    ACALL   SEND_COUNT_VAL
+  245:	  0111	22		    RET
+  246:
+  247:				; --- 未知指令 ---
+  248:	  0112			CMD_UNKNOWN:
+  249:	  0112	22		    RET
+  250:
+  251:				; 指令更新計數值之共同出口
+  252:	  0113			CMD_UPDATE_COUNT:
+  253:	  0113	31 18		    ACALL   UPDATE_7SEG
+  254:	  0115	31 23		    ACALL   SEND_COUNT_VAL
+  255:	  0117	22		    RET
+  256:
+  257:				; ------------------------------------------------------------------------------
+  258:				; 子程式: 更新共陰極 7 段顯示器 (P2 輸出)
+  259:				; 邏輯:
+  260:				;   - 共陰極 7 段顯示器高電位 (1) 點亮，低電位 (0) 熄滅。
+  261:				;   - 腳位對應: P2.0~P2.6 對應 a~g 段。
+  262:				; ------------------------------------------------------------------------------
+  263:	  0118			UPDATE_7SEG:
+  264:	  0118	E5 30		    MOV     A, COUNTER_VAL
+  265:	  011A	54 0F		    ANL     A, #0FH           ; 確保 index 為 0~15
+  266:	  011C	90 03 3A	    MOV     DPTR, #TABLE_7SEG
+  267:	  011F	93		    MOVC    A, @A+DPTR        ; 查表取得共陰極段碼
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 6
+
+
+
+ Line  I  Addr  Code            Source
+
+  268:	  0120	F5 A0		    MOV     P2, A             ; 輸出至 P2 驅動七段顯示器
+  269:	  0122	22		    RET
+  270:
+  271:				; ------------------------------------------------------------------------------
+  272:				; 子程式: 發送當前計數值至 PC 終端機 (格式: "Count = X\r\n")
+  273:				; ------------------------------------------------------------------------------
+  274:	  0123			SEND_COUNT_VAL:
+  275:	  0123	90 02 DB	    MOV     DPTR, #STR_COUNT_PREFIX
+  276:	  0126	31 48		    ACALL   SEND_STRING
+  277:
+  278:				    ; 轉換 COUNTER_VAL (0~15) 為 ASCII 字元
+  279:	  0128	E5 30		    MOV     A, COUNTER_VAL
+  280:	  012A	54 0F		    ANL     A, #0FH
+  281:	  012C	B4 0A 00	    CJNE    A, #10, CHK_VAL_10
+  282:	  012F			CHK_VAL_10:
+  283:	  012F	40 04		    JC      VAL_IS_DIGIT      ; 若 < 10 為數字 '0'~'9'
+  284:				    ; 為 10~15 ('A'~'F')
+  285:	  0131	24 37		    ADD     A, #('A' - 10)    ; A + 55 (37H) -> 10 + 55 = 65 = 'A'
+  286:	  0133	80 02		    SJMP    TX_HEX_CHAR
+  287:	  0135			VAL_IS_DIGIT:
+  288:	  0135	24 30		    ADD     A, #'0'           ; A + '0' (30H)
+  289:	  0137			TX_HEX_CHAR:
+  290:	  0137	31 52		    ACALL   SEND_CHAR
+  291:
+  292:				    ; 發送換行回車符號
+  293:	  0139	74 0D		    MOV     A, #0DH           ; Carriage Return '\r'
+  294:	  013B	31 52		    ACALL   SEND_CHAR
+  295:	  013D	74 0A		    MOV     A, #0AH           ; Line Feed '\n'
+  296:	  013F	31 52		    ACALL   SEND_CHAR
+  297:	  0141	22		    RET
+  298:
+  299:				; ------------------------------------------------------------------------------
+  300:				; 子程式: 發送開機迎賓字串與操作功能選單
+  301:				; ------------------------------------------------------------------------------
+  302:	  0142			SEND_WELCOME_MSG:
+  303:	  0142	90 01 65	    MOV     DPTR, #STR_WELCOME
+  304:	  0145	31 48		    ACALL   SEND_STRING
+  305:	  0147	22		    RET
+  306:
+  307:				; ------------------------------------------------------------------------------
+  308:				; 子程式: 發送以 00H 結尾的字串常數 (DPTR 指向字串起始位址)
+  309:				; ------------------------------------------------------------------------------
+  310:	  0148			SEND_STRING:
+  311:	  0148	E4		    CLR     A
+  312:	  0149	93		    MOVC    A, @A+DPTR
+  313:	  014A	60 05		    JZ      SEND_STR_END      ; 遇到 00H (字串結束符) 則返回
+  314:	  014C	31 52		    ACALL   SEND_CHAR
+  315:	  014E	A3		    INC     DPTR
+  316:	  014F	80 F7		    SJMP    SEND_STRING
+  317:	  0151			SEND_STR_END:
+  318:	  0151	22		    RET
+  319:
+  320:				; ------------------------------------------------------------------------------
+  321:				; 子程式: 透過 UART 發送單一位元組 (字元儲存於暫存器 A)
+  322:				; ------------------------------------------------------------------------------
+  323:	  0152			SEND_CHAR:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 7
+
+
+
+ Line  I  Addr  Code            Source
+
+  324:	  0152	C2 99		    CLR     TI                ; 發送前確保 TI 清空
+  325:	  0154	F5 99		    MOV     SBUF, A           ; 寫入 SBUF 啟動硬體串列發送
+  326:	  0156			WAIT_TI:
+  327:	  0156	30 99 FD	    JNB     TI, WAIT_TI       ; 等待發送完成旗標
+  328:	  0159	C2 99		    CLR     TI                ; 清除發送完成旗標
+  329:	  015B	22		    RET
+  330:
+  331:				; ------------------------------------------------------------------------------
+  332:				; 軟體延遲子程式 (適用於 11.0592MHz / 12MHz 晶振，精準約 20ms)
+  333:				; ------------------------------------------------------------------------------
+  334:	  015C			DELAY_20MS:
+  335:	  015C	7E 28		    MOV     R6, #40
+  336:	  015E			D20_L1:
+  337:	  015E	7F FA		    MOV     R7, #250
+  338:	  0160	DF FE		    DJNZ    R7, $             ; 250 * 2us = 500us
+  339:	  0162	DE FA		    DJNZ    R6, D20_L1        ; 40 * 500us = 20ms
+  340:	  0164	22		    RET
+  341:
+  342:				; ------------------------------------------------------------------------------
+  343:				; 字串常數資料表 (ASCII 字串，以 00H 結束)
+  344:				; ------------------------------------------------------------------------------
+  345:	  0165			STR_WELCOME:
+  346:	  0165	0D 0A		    DB      0DH, 0AH
+  347:	  0167	3D 3D 3D 3D	    DB      "========================================", 0DH, 0AH
+	  016B	3D 3D 3D 3D
+	  016F	3D 3D 3D 3D
+	  0173	3D 3D 3D 3D
+	  0177	3D 3D 3D 3D
+	  017B	3D 3D 3D 3D
+	  017F	3D 3D 3D 3D
+	  0183	3D 3D 3D 3D
+	  0187	3D 3D 3D 3D
+	  018B	3D 3D 3D 3D
+	  018F	0D 0A
+  348:	  0191	20 41 54 38	    DB      " AT89C52 16-Hex Counter with PC (UART) ", 0DH, 0AH
+	  0195	39 43 35 32
+	  0199	20 31 36 2D
+	  019D	48 65 78 20
+	  01A1	43 6F 75 6E
+	  01A5	74 65 72 20
+	  01A9	77 69 74 68
+	  01AD	20 50 43 20
+	  01B1	28 55 41 52
+	  01B5	54 29 20 0D
+	  01B9	0A
+  349:	  01BA	20 42 61 75	    DB      " Baud Rate: 9600 bps (8-N-1)           ", 0DH, 0AH
+	  01BE	64 20 52 61
+	  01C2	74 65 3A 20
+	  01C6	39 36 30 30
+	  01CA	20 62 70 73
+	  01CE	20 28 38 2D
+	  01D2	4E 2D 31 29
+	  01D6	20 20 20 20
+	  01DA	20 20 20 20
+	  01DE	20 20 20 0D
+	  01E2	0A
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 8
+
+
+
+ Line  I  Addr  Code            Source
+
+  350:	  01E3	20 43 6F 6E	    DB      " Control Commands:                     ", 0DH, 0AH
+	  01E7	74 72 6F 6C
+	  01EB	20 43 6F 6D
+	  01EF	6D 61 6E 64
+	  01F3	73 3A 20 20
+	  01F7	20 20 20 20
+	  01FB	20 20 20 20
+	  01FF	20 20 20 20
+	  0203	20 20 20 20
+	  0207	20 20 20 0D
+	  020B	0A
+  351:	  020C	20 20 20 5B	    DB      "   [0~F]     : Set Counter Directly    ", 0DH, 0AH
+	  0210	30 7E 46 5D
+	  0214	20 20 20 20
+	  0218	20 3A 20 53
+	  021C	65 74 20 43
+	  0220	6F 75 6E 74
+	  0224	65 72 20 44
+	  0228	69 72 65 63
+	  022C	74 6C 79 20
+	  0230	20 20 20 0D
+	  0234	0A
+  352:	  0235	20 20 20 5B	    DB      "   [Space/P] : Pause / Resume Counting ", 0DH, 0AH
+	  0239	53 70 61 63
+	  023D	65 2F 50 5D
+	  0241	20 3A 20 50
+	  0245	61 75 73 65
+	  0249	20 2F 20 52
+	  024D	65 73 75 6D
+	  0251	65 20 43 6F
+	  0255	75 6E 74 69
+	  0259	6E 67 20 0D
+	  025D	0A
+  353:	  025E	20 20 20 5B	    DB      "   [+] / [-] : Step Inc (+1) / Dec (-1)", 0DH, 0AH
+	  0262	2B 5D 20 2F
+	  0266	20 5B 2D 5D
+	  026A	20 3A 20 53
+	  026E	74 65 70 20
+	  0272	49 6E 63 20
+	  0276	28 2B 31 29
+	  027A	20 2F 20 44
+	  027E	65 63 20 28
+	  0282	2D 31 29 0D
+	  0286	0A
+  354:	  0287	20 20 20 5B	    DB      "   [R]       : Reset to 0              ", 0DH, 0AH
+	  028B	52 5D 20 20
+	  028F	20 20 20 20
+	  0293	20 3A 20 52
+	  0297	65 73 65 74
+	  029B	20 74 6F 20
+	  029F	30 20 20 20
+	  02A3	20 20 20 20
+	  02A7	20 20 20 20
+	  02AB	20 20 20 0D
+	  02AF	0A
+  355:	  02B0	3D 3D 3D 3D	    DB      "========================================", 0DH, 0AH, 00H
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 9
+
+
+
+ Line  I  Addr  Code            Source
+
+	  02B4	3D 3D 3D 3D
+	  02B8	3D 3D 3D 3D
+	  02BC	3D 3D 3D 3D
+	  02C0	3D 3D 3D 3D
+	  02C4	3D 3D 3D 3D
+	  02C8	3D 3D 3D 3D
+	  02CC	3D 3D 3D 3D
+	  02D0	3D 3D 3D 3D
+	  02D4	3D 3D 3D 3D
+	  02D8	0D 0A 00
+  356:
+  357:	  02DB			STR_COUNT_PREFIX:
+  358:	  02DB	43 6F 75 6E	    DB      "Count = ", 00H
+	  02DF	74 20 3D 20
+	  02E3	00
+  359:
+  360:	  02E4			STR_PAUSE:
+  361:	  02E4	5B 50 41 55	    DB      "[PAUSED] Counter Paused.", 0DH, 0AH, 00H
+	  02E8	53 45 44 5D
+	  02EC	20 43 6F 75
+	  02F0	6E 74 65 72
+	  02F4	20 50 61 75
+	  02F8	73 65 64 2E
+	  02FC	0D 0A 00
+  362:
+  363:	  02FF			STR_RESUME:
+  364:	  02FF	5B 52 55 4E	    DB      "[RUNNING] Counter Resumed.", 0DH, 0AH, 00H
+	  0303	4E 49 4E 47
+	  0307	5D 20 43 6F
+	  030B	75 6E 74 65
+	  030F	72 20 52 65
+	  0313	73 75 6D 65
+	  0317	64 2E 0D 0A
+	  031B	00
+  365:
+  366:	  031C			STR_RESET:
+  367:	  031C	5B 52 45 53	    DB      "[RESET] Counter Reset to 0.", 0DH, 0AH, 00H
+	  0320	45 54 5D 20
+	  0324	43 6F 75 6E
+	  0328	74 65 72 20
+	  032C	52 65 73 65
+	  0330	74 20 74 6F
+	  0334	20 30 2E 0D
+	  0338	0A 00
+  368:
+  369:				; ------------------------------------------------------------------------------
+  370:				; 共陰極 7 段顯示器 16 進制編碼表 (0 ~ F)
+  371:				; 段碼順序 (P2.7 ~ P2.0) : dp, g, f, e, d, c, b, a
+  372:				; 共陰極 (Common Cathode) : 1 = 點亮, 0 = 熄滅
+  373:				; ------------------------------------------------------------------------------
+  374:	  033A			TABLE_7SEG:
+  375:	  033A	3F		    DB      3FH               ; '0' : a, b, c, d, e, f
+  376:	  033B	06		    DB      06H               ; '1' : b, c
+  377:	  033C	5B		    DB      5BH               ; '2' : a, b, d, e, g
+  378:	  033D	4F		    DB      4FH               ; '3' : a, b, c, d, g
+  379:	  033E	66		    DB      66H               ; '4' : b, c, f, g
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 10
+
+
+
+ Line  I  Addr  Code            Source
+
+  380:	  033F	6D		    DB      6DH               ; '5' : a, c, d, f, g
+  381:	  0340	7D		    DB      7DH               ; '6' : a, c, d, e, f, g
+  382:	  0341	07		    DB      07H               ; '7' : a, b, c
+  383:	  0342	7F		    DB      7FH               ; '8' : a, b, c, d, e, f, g
+  384:	  0343	6F		    DB      6FH               ; '9' : a, b, c, d, f, g
+  385:	  0344	77		    DB      77H               ; 'A' : a, b, c, e, f, g
+  386:	  0345	7C		    DB      7CH               ; 'b' : c, d, e, f, g
+  387:	  0346	39		    DB      39H               ; 'C' : a, d, e, f
+  388:	  0347	5E		    DB      5EH               ; 'd' : b, c, d, e, g
+  389:	  0348	79		    DB      79H               ; 'E' : a, d, e, f, g
+  390:	  0349	71		    DB      71H               ; 'F' : a, e, f, g
+  391:
+  392:				    END
+  393:
+
+
+
+
+
+                     register banks used:  ---
+
+                     no errors
+
+
+
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 11
+
+
+
+
+
+	       L I S T   O F   S Y M B O L S
+	       =============================
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+??ASEM_51			  NUMBER    8051
+??VERSION			  NUMBER    0130
+AC				  BIT	      D6
+ACC				  DATA	      E0
+B				  DATA	      F0
+CHK_DIGIT			  CODE	    0088	 148
+CHK_D_GT			  CODE	    008D	 151
+CHK_D_VALID			  CODE	    0092	 154
+CHK_KEY_P			  CODE	    00CA	 198
+CHK_KEY_P_LOW			  CODE	    00CF	 201
+CHK_LF				  CODE	    0084	 143
+CHK_LOWER			  CODE	    00B0	 179
+CHK_L_GT			  CODE	    00B5	 182
+CHK_L_VALID			  CODE	    00BA	 185
+CHK_MINUS			  CODE	    00F0	 225
+CHK_PLUS			  CODE	    00E3	 216
+CHK_RESET			  CODE	    00FD	 234
+CHK_RESET_LOW			  CODE	    0102	 237
+CHK_SPACE			  CODE	    00C5	 195
+CHK_UPPER			  CODE	    009B	 163
+CHK_U_GT			  CODE	    00A0	 166
+CHK_U_VALID			  CODE	    00A5	 169
+CHK_VAL_10			  CODE	    012F	 282
+CMD_UNKNOWN			  CODE	    0112	 248
+CMD_UPDATE_COUNT		  CODE	    0113	 252
+COUNTER_VAL			  DATA	      30	  40
+CY				  BIT	      D7
+D20_L1				  CODE	    015E	 336
+DELAY_20MS			  CODE	    015C	 334
+DELAY_WITH_UART_POLL		  CODE	    006D	 117
+DO_RESET			  CODE	    0105	 239
+DPH				  DATA	      83
+DPL				  DATA	      82
+D_EXIT				  CODE	    007B	 130
+D_LOOP				  CODE	    006F	 119
+D_NO_CHAR			  CODE	    0079	 128
+EA				  BIT	      AF
+ES				  BIT	      AC
+ET0				  BIT	      A9
+ET1				  BIT	      AB
+EX0				  BIT	      A8
+EX1				  BIT	      AA
+EXTI0				  CODE	    0003
+EXTI1				  CODE	    0013
+F0				  BIT	      D5
+FLAGS				  DATA	      20	  41
+IE				  DATA	      A8
+IE0				  BIT	      89
+IE1				  BIT	      8B
+INT0				  BIT	      B2
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 12
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+INT1				  BIT	      B3
+IP				  DATA	      B8
+IT0				  BIT	      88
+IT1				  BIT	      8A
+MAIN				  CODE	    0030	  48
+MAIN_LOOP			  CODE	    0050	  80
+OV				  BIT	      D2
+P				  BIT	      D0
+P0				  DATA	      80
+P1				  DATA	      90
+P2				  DATA	      A0
+P3				  DATA	      B0
+PAUSE_FLAG			  BIT	      00	  42
+PAUSE_PROCESS			  CODE	    0066	 106
+PCON				  DATA	      87
+PROCESS_UART_CHAR		  CODE	    007C	 136
+PS				  BIT	      BC
+PSW				  DATA	      D0
+PT0				  BIT	      B9
+PT1				  BIT	      BB
+PX0				  BIT	      B8
+PX1				  BIT	      BA
+RB8				  BIT	      9A
+RD				  BIT	      B7
+REN				  BIT	      9C
+RESET				  CODE	    0000
+RI				  BIT	      98
+RS0				  BIT	      D3
+RS1				  BIT	      D4
+RXD				  BIT	      B0
+SBUF				  DATA	      99
+SCON				  DATA	      98
+SEND_CHAR			  CODE	    0152	 323
+SEND_COUNT_VAL			  CODE	    0123	 274
+SEND_PAUSE_NOTIFY		  CODE	    00DD	 210
+SEND_STRING			  CODE	    0148	 310
+SEND_STR_END			  CODE	    0151	 317
+SEND_WELCOME_MSG		  CODE	    0142	 302
+SET_DIGIT			  CODE	    0094	 156
+SET_LOWER			  CODE	    00BC	 187
+SET_UPPER			  CODE	    00A7	 171
+SINT				  CODE	    0023
+SM0				  BIT	      9F
+SM1				  BIT	      9E
+SM2				  BIT	      9D
+SP				  DATA	      81
+STR_COUNT_PREFIX		  CODE	    02DB	 357
+STR_PAUSE			  CODE	    02E4	 360
+STR_RESET			  CODE	    031C	 366
+STR_RESUME			  CODE	    02FF	 363
+STR_WELCOME			  CODE	    0165	 345
+T0				  BIT	      B4
+T1				  BIT	      B5
+TABLE_7SEG			  CODE	    033A	 374
+TB8				  BIT	      9B
+TCON				  DATA	      88
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 13
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+TF0				  BIT	      8D
+TF1				  BIT	      8F
+TH0				  DATA	      8C
+TH1				  DATA	      8D
+TI				  BIT	      99
+TIMER0				  CODE	    000B
+TIMER1				  CODE	    001B
+TL0				  DATA	      8A
+TL1				  DATA	      8B
+TMOD				  DATA	      89
+TOGGLE_PAUSE			  CODE	    00D2	 203
+TR0				  BIT	      8C
+TR1				  BIT	      8E
+TXD				  BIT	      B1
+TX_HEX_CHAR			  CODE	    0137	 289
+UPDATE_7SEG			  CODE	    0118	 263
+VAL_IS_DIGIT			  CODE	    0135	 287
+WAIT_TI				  CODE	    0156	 326
+WR				  BIT	      B6
